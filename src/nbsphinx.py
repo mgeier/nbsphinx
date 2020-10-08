@@ -2105,6 +2105,14 @@ def depart_codearea_latex(self, node):
     self.body.append('\n'.join(out))
 
 
+def visit_codearea_text(self, node):
+    pass
+
+
+def depart_codearea_text(self, node):
+    pass
+
+
 def visit_fancyoutput_latex(self, node):
     out = r"""
 \hrule height -\fboxrule\relax
@@ -2151,6 +2159,17 @@ def visit_admonition_latex(self, node):
 
 def depart_admonition_latex(self, node):
     self.body.append('\\end{sphinxadmonition}\n')
+
+
+def visit_admonition_text(self, node):
+    # TODO: nice box? text width?
+    #self.body.append('VISIT ADMONITION')
+    pass
+
+
+def depart_admonition_text(self, node):
+    #self.body.append('DEPART ADMONITION')
+    pass
 
 
 def depart_gallery_html(self, node):
@@ -2215,18 +2234,30 @@ def setup(app):
     app.add_directive('nbinfo', NbInfo)
     app.add_directive('nbwarning', NbWarning)
     app.add_directive('nbgallery', NbGallery)
-    app.add_node(CodeAreaNode,
-                 html=(do_nothing, depart_codearea_html),
-                 latex=(visit_codearea_latex, depart_codearea_latex))
-    app.add_node(FancyOutputNode,
-                 html=(do_nothing, do_nothing),
-                 latex=(visit_fancyoutput_latex, depart_fancyoutput_latex))
-    app.add_node(AdmonitionNode,
-                 html=(visit_admonition_html, depart_admonition_html),
-                 latex=(visit_admonition_latex, depart_admonition_latex))
-    app.add_node(GalleryNode,
-                 html=(do_nothing, depart_gallery_html),
-                 latex=(do_nothing, do_nothing))
+    app.add_node(
+        CodeAreaNode,
+        html=(do_nothing, depart_codearea_html),
+        latex=(visit_codearea_latex, depart_codearea_latex),
+        text=(visit_codearea_text, depart_codearea_text),
+    )
+    app.add_node(
+        FancyOutputNode,
+        html=(do_nothing, do_nothing),
+        latex=(visit_fancyoutput_latex, depart_fancyoutput_latex),
+        text=(do_nothing, do_nothing),
+    )
+    app.add_node(
+        AdmonitionNode,
+        html=(visit_admonition_html, depart_admonition_html),
+        latex=(visit_admonition_latex, depart_admonition_latex),
+        text=(visit_admonition_text, depart_admonition_text),
+    )
+    app.add_node(
+        GalleryNode,
+        html=(do_nothing, depart_gallery_html),
+        latex=(do_nothing, do_nothing),
+        text=(do_nothing, do_nothing),
+    )
     app.connect('builder-inited', builder_inited)
     app.connect('config-inited', config_inited)
     app.connect('html-page-context', html_page_context)
