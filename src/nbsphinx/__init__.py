@@ -587,21 +587,22 @@ class NotebookParser(rst.Parser):
             return
 
         srcdir = os.path.dirname(env.doc2path(env.docname))
-        auxdir = env.nbsphinx_auxdir
+        domain = env.get_domain('nbsphinx')
+        domaindata = domain.data[env.docname]
 
         resources = {}
         # Working directory for ExecutePreprocessor
         resources['metadata'] = {'path': srcdir}
         # Sphinx doesn't accept absolute paths in images etc.
-        resources['output_files_dir'] = os.path.relpath(auxdir, srcdir)
+        resources['output_files_dir'] = os.path.relpath(domain.auxdir, srcdir)
         resources['unique_key'] = re.sub('[/ ]', '_', env.docname)
         resources['nbsphinx_docname'] = env.docname
 
         # NB: The source file could have a different suffix
         #     if nbsphinx_custom_formats is used.
         notebookfile = env.docname + '.ipynb'
-        env.nbsphinx_notebooks[env.docname] = notebookfile
-        auxfile = os.path.join(auxdir, notebookfile)
+        domaindata.notebook = notebookfile
+        auxfile = os.path.join(domain.auxdir, notebookfile)
         sphinx.util.ensuredir(os.path.dirname(auxfile))
         resources['nbsphinx_save_notebook'] = auxfile
 
@@ -660,10 +661,9 @@ class NotebookParser(rst.Parser):
             rst.Parser.parse(self, epilog, document)
 
         if resources.get('nbsphinx_widgets', False):
-            env.nbsphinx_widgets.add(env.docname)
+            domain.widgets.add(env.docname)
 
-        env.nbsphinx_thumbnails[env.docname] = resources.get(
-            'nbsphinx_thumbnail', {})
+        domaindata.thumbnail = resources.get('nbsphinx_thumbnail', {})
 
 
 class NotebookError(sphinx.errors.SphinxError):
@@ -1420,6 +1420,7 @@ class CopyLinkedFiles(docutils.transforms.Transform):
 
     def apply(self):
         env = self.document.settings.env
+        domain = env.get_domain('nbsphinx')
         for node in self.document.traverse(docutils.nodes.reference):
             filename, fragment = _local_file_from_reference(
                 node, self.document)
@@ -1438,7 +1439,7 @@ class CopyLinkedFiles(docutils.transforms.Transform):
                     'Link outside source directory: %r', file, location=node,
                     type='nbsphinx', subtype='localfile')
                 continue  # Link is ignored
-            env.nbsphinx_files.setdefault(env.docname, []).append(file)
+            domain.data[env.docname].files.add(file)
 
 
 class ForceEquations(docutils.transforms.Transform):
@@ -1606,16 +1607,7 @@ def load_requirejs(app):
 
 
 def builder_inited(app):
-    env = app.env
-    env.settings['line_length_limit'] = 100_000_000
-    env.nbsphinx_notebooks = {}
-    env.nbsphinx_files = {}
-    if not hasattr(env, 'nbsphinx_thumbnails'):
-        env.nbsphinx_thumbnails = {}
-    env.nbsphinx_widgets = set()
-    env.nbsphinx_auxdir = os.path.join(env.doctreedir, 'nbsphinx')
-    sphinx.util.ensuredir(env.nbsphinx_auxdir)
-
+    app.env.settings['line_length_limit'] = 100_000_000
     if app.builder.format == 'latex':
         sphinx.util.fileutil.copy_asset(
             os.path.join(os.path.dirname(__file__), '_texinputs'),
@@ -1629,21 +1621,36 @@ def env_merge_info(app, env, docnames, other):
     env.nbsphinx_widgets.update(other.nbsphinx_widgets)
 
 
-def env_purge_doc(app, env, docname):
-    """Remove list of local files for a given document."""
-    try:
-        del env.nbsphinx_notebooks[docname]
-    except KeyError:
-        pass
-    try:
-        del env.nbsphinx_files[docname]
-    except KeyError:
-        pass
-    try:
-        del env.nbsphinx_thumbnails[docname]
-    except KeyError:
-        pass
-    env.nbsphinx_widgets.discard(docname)
+class NbsphinxDomain(sphinx.domains.Domain):
+
+    name = 'nbsphinx'
+
+    label = 'Data for nbsphinx'
+
+    # bump this when the format of `self.data` changes
+    data_version = 0
+
+    def __init__(self, env):
+        # TODO: init base class?
+        self.widgets = set()
+        self.auxdir = os.path.join(env.doctreedir, 'nbsphinx')
+        sphinx.util.ensuredir(self.auxdir)
+
+    def clear_doc(self, docname):
+        del self.data[docname]
+        self.widgets.discard(docname)
+
+    def merge_domaindata(self, docnames, otherdata):
+        # TODO: get "widgets" information per docname!
+        for docname in docnames:
+            # TODO: update instead of assign?
+            self.data[docname] = otherdata[docname]
+
+    def process_doc(self, env, docname, document):
+        # TODO: namespace? notebook, files, thumbnail
+        # TODO: default for files: set()
+        # TODO: default for thumbnail: {}
+        self.data[docname] = None # TODO: empty dict?
 
 
 def html_page_context(app, pagename, templatename, context, doctree):
@@ -1658,8 +1665,9 @@ def html_page_context(app, pagename, templatename, context, doctree):
 def html_collect_pages(app):
     """This event handler is abused to copy local files around."""
     files = set()
-    for file_list in app.env.nbsphinx_files.values():
-        files.update(file_list)
+    domain = app.env.get_domain('nbsphinx')
+    for data in domain.data.values():
+        files.update(data.files)
     for file in status_iterator(files, 'copying linked files... ',
                                 sphinx.util.console.brown, len(files)):
         target = os.path.join(app.builder.outdir, file)
@@ -1670,13 +1678,12 @@ def html_collect_pages(app):
             logger.warning(
                 'Cannot copy local file %r: %s', file, err,
                 type='nbsphinx', subtype='localfile')
-    notebooks = app.env.nbsphinx_notebooks.values()
-    for notebook in status_iterator(
-            notebooks, 'copying notebooks ... ',
+    for data in status_iterator(
+            domain.data.values(), 'copying notebooks ... ',
             'brown', len(notebooks)):
         sphinx.util.copyfile(
-            os.path.join(app.env.nbsphinx_auxdir, notebook),
-            os.path.join(app.builder.outdir, notebook))
+            os.path.join(domain.auxdir, data.notebook),
+            os.path.join(app.builder.outdir, data.notebook))
 
     context = {
         'nbsphinx_responsive_width': app.config.nbsphinx_responsive_width,
@@ -1695,10 +1702,11 @@ def html_collect_pages(app):
             context=context)
     return []  # No new HTML pages are created
 
+
 def env_updated(app, env):
     widgets_path = app.config.nbsphinx_widgets_path
     if widgets_path is None:
-        if env.nbsphinx_widgets:
+        if env.get_domain('nbsphinx').widgets:
             try:
                 from ipywidgets.embed import DEFAULT_EMBED_REQUIREJS_URL
             except ImportError:
@@ -1763,7 +1771,7 @@ def doctree_resolved(app, doctree, fromdocname):
                         matched = pattern
                         conf_py_thumbnail = candidate
 
-                thumbnail = app.env.nbsphinx_thumbnails.get(doc, {})
+                thumbnail = app.env.get_domain('nbsphinx').data[doc].thumbnail
                 # NB: "None" is used as marker for implicit thumbnail:
                 tooltip = thumbnail.get('tooltip', '')
                 filename = thumbnail.get('filename', '')
@@ -1987,6 +1995,7 @@ def do_nothing(self, node):
 
 def setup(app):
     """Initialize Sphinx extension."""
+    app.add_domain(NbsphinxDomain)
     app.add_source_parser(NotebookParser)
 
     app.add_config_value('nbsphinx_execute', 'auto', rebuild='env')
@@ -2012,6 +2021,8 @@ def setup(app):
     app.add_config_value('nbsphinx_thumbnails', {}, rebuild='html')
     app.add_config_value('nbsphinx_assume_equations', True, rebuild='env')
 
+    # TODO: add directives for nbsphinx: domain
+    # TODO: deprecated, but kept for backwards compatibility:
     app.add_directive('nbinput', NbInput)
     app.add_directive('nboutput', NbOutput)
     app.add_directive('nbinfo', NbInfo)
@@ -2038,7 +2049,6 @@ def setup(app):
     app.connect('config-inited', config_inited)
     app.connect('html-page-context', html_page_context)
     app.connect('html-collect-pages', html_collect_pages)
-    app.connect('env-purge-doc', env_purge_doc)
     app.connect('env-updated', env_updated)
     app.connect('doctree-resolved', doctree_resolved)
     app.connect('env-merge-info', env_merge_info)
@@ -2066,5 +2076,4 @@ def setup(app):
         'version': __version__,
         'parallel_read_safe': True,
         'parallel_write_safe': True,
-        'env_version': 4,
     }
