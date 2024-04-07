@@ -660,9 +660,7 @@ class NotebookParser(rst.Parser):
                 env.config.nbsphinx_epilog).render(env=env)
             rst.Parser.parse(self, epilog, document)
 
-        if resources.get('nbsphinx_widgets', False):
-            domain.widgets.add(env.docname)
-
+        domaindata.widgets = resources.get('nbsphinx_widgets', False)
         domaindata.thumbnail = resources.get('nbsphinx_thumbnail', {})
 
 
@@ -1420,7 +1418,7 @@ class CopyLinkedFiles(docutils.transforms.Transform):
 
     def apply(self):
         env = self.document.settings.env
-        domain = env.get_domain('nbsphinx')
+        domaindata = env.get_domain('nbsphinx').data[env.docname]
         for node in self.document.traverse(docutils.nodes.reference):
             filename, fragment = _local_file_from_reference(
                 node, self.document)
@@ -1439,7 +1437,7 @@ class CopyLinkedFiles(docutils.transforms.Transform):
                     'Link outside source directory: %r', file, location=node,
                     type='nbsphinx', subtype='localfile')
                 continue  # Link is ignored
-            domain.data[env.docname].files.add(file)
+            domaindata.local_files.add(file)
 
 
 class ForceEquations(docutils.transforms.Transform):
@@ -1632,24 +1630,24 @@ class NbsphinxDomain(sphinx.domains.Domain):
 
     def __init__(self, env):
         # TODO: init base class?
-        self.widgets = set()
         self.auxdir = os.path.join(env.doctreedir, 'nbsphinx')
         sphinx.util.ensuredir(self.auxdir)
 
     def clear_doc(self, docname):
         del self.data[docname]
-        self.widgets.discard(docname)
 
     def merge_domaindata(self, docnames, otherdata):
-        # TODO: get "widgets" information per docname!
         for docname in docnames:
             # TODO: update instead of assign?
             self.data[docname] = otherdata[docname]
 
     def process_doc(self, env, docname, document):
-        # TODO: namespace? notebook, files, thumbnail
-        # TODO: default for files: set()
+        # TODO: namespace? notebook, local_files, thumbnail
+        # TODO: default for local_files: set()
         # TODO: default for thumbnail: {}
+        # TODO: default for has_widgets: False
+        # TODO: default for notebook: empty string?
+        # TODO: notebook vs. notebookfile?
         self.data[docname] = None # TODO: empty dict?
 
 
@@ -1667,7 +1665,7 @@ def html_collect_pages(app):
     files = set()
     domain = app.env.get_domain('nbsphinx')
     for data in domain.data.values():
-        files.update(data.files)
+        files.update(data.local_files)
     for file in status_iterator(files, 'copying linked files... ',
                                 sphinx.util.console.brown, len(files)):
         target = os.path.join(app.builder.outdir, file)
@@ -1678,8 +1676,9 @@ def html_collect_pages(app):
             logger.warning(
                 'Cannot copy local file %r: %s', file, err,
                 type='nbsphinx', subtype='localfile')
+    notebooks = domain.data.values()
     for data in status_iterator(
-            domain.data.values(), 'copying notebooks ... ',
+            notebooks, 'copying notebooks ... ',
             'brown', len(notebooks)):
         sphinx.util.copyfile(
             os.path.join(domain.auxdir, data.notebook),
@@ -1706,7 +1705,8 @@ def html_collect_pages(app):
 def env_updated(app, env):
     widgets_path = app.config.nbsphinx_widgets_path
     if widgets_path is None:
-        if env.get_domain('nbsphinx').widgets:
+        domain = env.get_domain('nbsphinx')
+        if any(v.has_widgets for v in domain.data.values()):
             try:
                 from ipywidgets.embed import DEFAULT_EMBED_REQUIREJS_URL
             except ImportError:
