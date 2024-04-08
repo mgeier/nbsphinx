@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+from types import SimpleNamespace
 from urllib.parse import unquote
 import uuid
 
@@ -600,9 +601,9 @@ class NotebookParser(rst.Parser):
 
         # NB: The source file could have a different suffix
         #     if nbsphinx_custom_formats is used.
-        notebookfile = env.docname + '.ipynb'
-        doc_data.notebook = notebookfile
-        auxfile = os.path.join(domain.auxdir, notebookfile)
+        notebook_file = env.docname + '.ipynb'
+        doc_data.notebook_file = notebook_file
+        auxfile = os.path.join(domain.auxdir, notebook_file)
         sphinx.util.ensuredir(os.path.dirname(auxfile))
         resources['nbsphinx_save_notebook'] = auxfile
 
@@ -1641,13 +1642,12 @@ class NbsphinxDomain(sphinx.domains.Domain):
             self.data[docname] = otherdata[docname]
 
     def process_doc(self, env, docname, document):
-        # TODO: namespace? notebook, local_files, thumbnail
-        # TODO: default for local_files: set()
-        # TODO: default for thumbnail: {}
-        # TODO: default for has_widgets: False
-        # TODO: default for notebook: empty string? None?
-        # TODO: notebook vs. notebookfile?
-        self.data[docname] = None # TODO: empty dict?
+        self.data[docname] = SimpleNamespace(
+            thumbnail={},
+            notebook_file=None,
+            local_files=set(),
+            has_widgets=False,
+        )
 
     def has_widgets(self):
         return any(v.has_widgets for v in self.data.values())
@@ -1683,8 +1683,8 @@ def html_collect_pages(app):
             notebooks, 'copying notebooks ... ',
             'brown', len(notebooks)):
         sphinx.util.copyfile(
-            os.path.join(domain.auxdir, data.notebook),
-            os.path.join(app.builder.outdir, data.notebook))
+            os.path.join(domain.auxdir, data.notebook_file),
+            os.path.join(app.builder.outdir, data.notebook_file))
 
     context = {
         'nbsphinx_responsive_width': app.config.nbsphinx_responsive_width,
