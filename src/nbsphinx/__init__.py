@@ -589,7 +589,6 @@ class NotebookParser(rst.Parser):
 
         srcdir = os.path.dirname(env.doc2path(env.docname))
         domain = env.get_domain('nbsphinx')
-        doc_data = domain.data[env.docname]
 
         resources = {}
         # Working directory for ExecutePreprocessor
@@ -602,7 +601,6 @@ class NotebookParser(rst.Parser):
         # NB: The source file could have a different suffix
         #     if nbsphinx_custom_formats is used.
         notebook_file = env.docname + '.ipynb'
-        doc_data.notebook_file = notebook_file
         auxfile = os.path.join(domain.auxdir, notebook_file)
         sphinx.util.ensuredir(os.path.dirname(auxfile))
         resources['nbsphinx_save_notebook'] = auxfile
@@ -661,8 +659,12 @@ class NotebookParser(rst.Parser):
                 env.config.nbsphinx_epilog).render(env=env)
             rst.Parser.parse(self, epilog, document)
 
-        doc_data.widgets = resources.get('nbsphinx_widgets', False)
-        doc_data.thumbnail = resources.get('nbsphinx_thumbnail', {})
+        domain.notebooks[env.docname] = SimpleNamespace(
+            notebook_file=notebook_file,
+            thumbnail=resources.get('nbsphinx_thumbnail', {}),
+            has_widgets=resources.get('nbsphinx_widgets', False),
+            local_files=set(),
+        )
 
 
 class NotebookError(sphinx.errors.SphinxError):
@@ -1419,7 +1421,7 @@ class CopyLinkedFiles(docutils.transforms.Transform):
 
     def apply(self):
         env = self.document.settings.env
-        data = env.get_domain('nbsphinx').data[env.docname]
+        data = env.get_domain('nbsphinx').notebooks[env.docname]
         for node in self.document.traverse(docutils.nodes.reference):
             filename, fragment = _local_file_from_reference(
                 node, self.document)
@@ -1624,7 +1626,7 @@ class NbsphinxDomain(sphinx.domains.Domain):
 
     name = 'nbsphinx'
 
-    label = 'Data for nbsphinx'
+    label = 'Information about parsed notebooks'
 
     # bump this when the format of `self.data` changes
     data_version = 0
@@ -1634,23 +1636,20 @@ class NbsphinxDomain(sphinx.domains.Domain):
         self.auxdir = os.path.join(env.doctreedir, 'nbsphinx')
         sphinx.util.ensuredir(self.auxdir)
 
+    @property
+    def notebooks(self):
+        return self.data.setdefault('notebooks', {})
+
     def clear_doc(self, docname):
-        del self.data[docname]
+        self.notebooks.pop(docname, None)
 
     def merge_domaindata(self, docnames, otherdata):
-        for docname in docnames:
-            self.data[docname] = otherdata[docname]
-
-    def process_doc(self, env, docname, document):
-        self.data[docname] = SimpleNamespace(
-            thumbnail={},
-            notebook_file=None,
-            local_files=set(),
-            has_widgets=False,
-        )
+        for k, v in otherdata.items():
+            if k in docnames:
+                self.notebooks[k] = v
 
     def has_widgets(self):
-        return any(v.has_widgets for v in self.data.values())
+        return any(v.has_widgets for v in self.notebooks.values())
 
 
 def html_page_context(app, pagename, templatename, context, doctree):
@@ -1666,7 +1665,7 @@ def html_collect_pages(app):
     """This event handler is abused to copy local files around."""
     files = set()
     domain = app.env.get_domain('nbsphinx')
-    for data in domain.data.values():
+    for data in domain.notebooks.values():
         files.update(data.local_files)
     for file in status_iterator(files, 'copying linked files... ',
                                 sphinx.util.console.brown, len(files)):
@@ -1678,13 +1677,13 @@ def html_collect_pages(app):
             logger.warning(
                 'Cannot copy local file %r: %s', file, err,
                 type='nbsphinx', subtype='localfile')
-    notebooks = domain.data.values()
-    for data in status_iterator(
-            notebooks, 'copying notebooks ... ',
-            'brown', len(notebooks)):
+    notebook_files = [v.notebook_file for v in domain.notebooks.values()]
+    for notebook_file in status_iterator(
+            notebook_files, 'copying notebooks ... ',
+            'brown', len(notebook_files)):
         sphinx.util.copyfile(
-            os.path.join(domain.auxdir, data.notebook_file),
-            os.path.join(app.builder.outdir, data.notebook_file))
+            os.path.join(domain.auxdir, notebook_file),
+            os.path.join(app.builder.outdir, notebook_file))
 
     context = {
         'nbsphinx_responsive_width': app.config.nbsphinx_responsive_width,
@@ -1772,7 +1771,11 @@ def doctree_resolved(app, doctree, fromdocname):
                         matched = pattern
                         conf_py_thumbnail = candidate
 
-                thumbnail = app.env.get_domain('nbsphinx').data[doc].thumbnail
+                domain = app.env.get_domain('nbsphinx')
+                try:
+                    thumbnail = domain.notebooks[doc].thumbnail
+                except KeyError:
+                    thumbnail = {}
                 # NB: "None" is used as marker for implicit thumbnail:
                 tooltip = thumbnail.get('tooltip', '')
                 filename = thumbnail.get('filename', '')
