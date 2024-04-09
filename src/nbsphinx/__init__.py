@@ -1615,13 +1615,6 @@ def builder_inited(app):
             os.path.join(app.builder.outdir))
 
 
-def env_merge_info(app, env, docnames, other):
-    env.nbsphinx_notebooks.update(other.nbsphinx_notebooks)
-    env.nbsphinx_files.update(other.nbsphinx_files)
-    env.nbsphinx_thumbnails.update(other.nbsphinx_thumbnails)
-    env.nbsphinx_widgets.update(other.nbsphinx_widgets)
-
-
 class NbsphinxDomain(sphinx.domains.Domain):
 
     name = 'nbsphinx'
@@ -2055,7 +2048,6 @@ def setup(app):
     app.connect('html-collect-pages', html_collect_pages)
     app.connect('env-updated', env_updated)
     app.connect('doctree-resolved', doctree_resolved)
-    app.connect('env-merge-info', env_merge_info)
     app.add_transform(CreateSectionLabels)
     app.add_transform(CreateDomainObjectLabels)
     app.add_transform(RewriteLocalLinks)
