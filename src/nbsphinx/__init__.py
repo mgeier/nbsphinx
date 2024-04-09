@@ -1644,7 +1644,7 @@ class NbsphinxDomain(sphinx.domains.Domain):
         self.notebooks.pop(docname, None)
 
     def merge_domaindata(self, docnames, otherdata):
-        for k, v in otherdata.items():
+        for k, v in otherdata['notebooks'].items():
             if k in docnames:
                 self.notebooks[k] = v
 
