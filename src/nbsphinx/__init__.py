@@ -34,6 +34,12 @@ try:
 except ImportError:
     # This will be removed in Sphinx 8:
     from sphinx.util import status_iterator
+try:
+    from sphinx.util._importer import import_object
+except ImportError:
+    # This will hopefully be un-deprecated, see
+    # https://github.com/sphinx-doc/sphinx/issues/13083
+    from sphinx.util import import_object
 import traitlets
 
 
@@ -594,7 +600,7 @@ class NotebookParser(rst.Parser):
         else:
             kwargs = {}
         if isinstance(converter, str):
-            converter = sphinx.util.import_object(converter)
+            converter = import_object(converter)
         try:
             nb = converter(inputstring, **kwargs)
         except Exception:
